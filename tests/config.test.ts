@@ -22,3 +22,13 @@ test("keeps supported custom OpenAI models", () => {
 
   assert.equal(config?.model, "gpt-4.1");
 });
+
+test("supports Claude configuration", () => {
+  const config = resolveConfig({
+    aiProvider: "claude",
+    apiKey: "sk-ant-test",
+  });
+
+  assert.equal(config?.model, "claude-sonnet-4-5");
+  assert.equal(config?.aiProvider, "claude");
+});

@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import inquirer from "inquirer";
-import ora from "ora";
+import ora, { type Ora } from "ora";
 import { marked } from "marked";
 import { markedTerminal } from "marked-terminal";
 import {
@@ -17,10 +17,12 @@ import {
   getCommitDiff,
   getDiff,
   getGitContext,
+  getPullDiff,
   getStagedDiff,
   getUnstagedDiff,
   isGitRepository,
 } from "./services/git.js";
+import { explainDiffWithClaude, validateClaudeKey } from "./services/claude.js";
 import { explainDiffWithGemini, validateGeminiKey } from "./services/gemini.js";
 import { explainDiffWithOpenAI, validateOpenAIKey } from "./services/openai.js";
 import {
@@ -44,9 +46,13 @@ marked.use(
 );
 
 const providerModels: Record<
-  "gemini" | "openai",
+  Config["aiProvider"],
   { validationModel: string; models: string[] }
 > = {
+  claude: {
+    validationModel: "claude-sonnet-4-5",
+    models: ["claude-sonnet-4-5", "claude-opus-4-6", "claude-haiku-4-5"],
+  },
   gemini: {
     validationModel: "gemini-3.6-flash",
     models: ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest"],
@@ -76,6 +82,7 @@ interface ExplainCommandOptions {
   staged?: boolean;
   unstaged?: boolean;
   commit?: string;
+  pull?: boolean;
   emoji?: boolean;
   json?: boolean;
 }
@@ -90,13 +97,14 @@ program
   .description("Initial setup of the CLI")
   .action(async () => {
     const { aiProvider } = await inquirer.prompt<{
-      aiProvider: "gemini" | "openai";
+      aiProvider: Config["aiProvider"];
     }>([
       {
         type: "select",
         name: "aiProvider",
         message: "Choose your AI provider:",
         choices: [
+          { name: "Claude", value: "claude" },
           { name: "Google Gemini", value: "gemini" },
           { name: "OpenAI", value: "openai" },
         ],
@@ -108,16 +116,17 @@ program
       {
         type: "input",
         name: "apiKey",
-        message: `Enter your ${aiProvider === "gemini" ? "Google Gemini" : "OpenAI"} API Key:`,
+        message: `Enter your ${getProviderDisplayName(aiProvider)} API Key:`,
       },
     ]);
 
     const spinner = ora("Validating API Key...").start();
     const validationModel = providerModels[aiProvider].validationModel;
-    const validation =
-      aiProvider === "gemini"
-        ? await validateGeminiKey(apiKey.trim(), validationModel)
-        : await validateOpenAIKey(apiKey.trim(), validationModel);
+    const validation = await validateProviderKey(
+      aiProvider,
+      apiKey.trim(),
+      validationModel,
+    );
 
     if (validation.status === "invalid") {
       spinner.fail(chalk.red(validation.message || "Invalid API Key."));
@@ -125,11 +134,10 @@ program
     }
 
     if (validation.status === "quota") {
-      spinner.warn(
-        chalk.yellow(
-          validation.message ||
-            "API key looks valid, but the provider reports quota or rate limiting.",
-        ),
+      printValidationWarning(
+        spinner,
+        validation.message ||
+          "API key looks valid, but the provider reports quota or rate limiting.",
       );
       console.log(
         chalk.dim(
@@ -137,10 +145,9 @@ program
         ),
       );
     } else if (validation.status === "error") {
-      spinner.warn(
-        chalk.yellow(
-          `Could not fully validate the key: ${validation.message || "unknown error"}`,
-        ),
+      printValidationWarning(
+        spinner,
+        `Could not fully validate the key: ${validation.message || "unknown error"}`,
       );
       console.log(
         chalk.dim(
@@ -181,7 +188,7 @@ program
     const provider = getProviderOption(options.provider);
 
     if (options.provider && !provider) {
-      console.log(chalk.red("Error: provider must be `gemini` or `openai`."));
+      console.log(chalk.red("Error: provider must be `claude`, `gemini`, or `openai`."));
       return;
     }
 
@@ -201,7 +208,7 @@ program
     if (!newConfig) {
       console.log(
         chalk.red(
-          "Error: missing API key. Run `git-explain setup`, pass `--key`, or set OPENAI_API_KEY/GEMINI_API_KEY.",
+          "Error: missing API key. Run `git-explain setup`, pass `--key`, or set ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY.",
         ),
       );
       return;
@@ -221,6 +228,7 @@ program
   .option("--staged", "Explain staged changes only")
   .option("--unstaged", "Explain unstaged changes only")
   .option("--commit <sha>", "Explain a specific commit")
+  .option("--pull", "Explain changes introduced by the last git pull")
   .option("--no-emoji", "Ask the AI for a cleaner explanation without emojis")
   .option("--json", "Print machine-readable JSON output")
   .argument("[files...]", "Specific files to analyze")
@@ -286,7 +294,11 @@ program
       const formattedDiff = formatDiffByFile(diff);
 
       const explanation =
-        config.aiProvider === "openai"
+        config.aiProvider === "claude"
+          ? await explainDiffWithClaude(formattedDiff, config, {
+              includeEmoji: options.emoji !== false,
+            })
+          : config.aiProvider === "openai"
           ? await explainDiffWithOpenAI(formattedDiff, config, {
               includeEmoji: options.emoji !== false,
             })
@@ -446,7 +458,7 @@ program
       "Configuration",
       config
         ? `${config.aiProvider} / ${config.model} (${maskApiKey(config.apiKey)})`
-        : "Run `git-explain setup` or set OPENAI_API_KEY/GEMINI_API_KEY.",
+        : "Run `git-explain setup` or set ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY.",
     );
 
     console.log(chalk.dim(`Config path: ${getConfigPath()}`));
@@ -495,10 +507,11 @@ program
 
     const spinner = ora("Checking provider access...").start();
     const validationModel = providerModels[config.aiProvider].validationModel;
-    const validation =
-      config.aiProvider === "gemini"
-        ? await validateGeminiKey(config.apiKey, validationModel)
-        : await validateOpenAIKey(config.apiKey, validationModel);
+    const validation = await validateProviderKey(
+      config.aiProvider,
+      config.apiKey,
+      validationModel,
+    );
 
     if (validation.status === "valid") {
       spinner.succeed("Provider access looks good.");
@@ -506,7 +519,10 @@ program
     }
 
     if (validation.status === "quota") {
-      spinner.warn(validation.message || "Provider reports quota/rate limiting.");
+      printValidationWarning(
+        spinner,
+        validation.message || "Provider reports quota/rate limiting.",
+      );
       return;
     }
 
@@ -529,7 +545,10 @@ program
     console.log(chalk.dim("           npm run dev -- explain --staged"));
     console.log(chalk.dim("           npm run dev -- explain --unstaged"));
     console.log(chalk.dim("           npm run dev -- explain --commit abc123"));
+    console.log(chalk.dim("           npm run dev -- explain --pull"));
     console.log(chalk.dim("           npm run dev -- explain --json"));
+    console.log(chalk.dim("           npm run dev -- explain src/index.ts"));
+    console.log(chalk.dim("           npm run dev -- explain src/index.ts src/utils/diff.ts"));
     console.log(chalk.dim("           npm run dev -- explain --no-emoji src/index.ts\n"));
     console.log(`${chalk.cyan("history")}    List saved explanations.`);
     console.log(chalk.dim("           npm run dev -- history"));
@@ -539,6 +558,7 @@ program
     console.log(chalk.dim("           npm run dev -- show 0"));
     console.log(chalk.dim("           npm run dev -- show msg9ljxt-3tr5nl\n"));
     console.log(`${chalk.cyan("config")}     Update provider, model, or API key without rerunning setup.`);
+    console.log(chalk.dim("           npm run dev -- config --provider claude --model claude-sonnet-4-5"));
     console.log(chalk.dim("           npm run dev -- config --provider gemini --model gemini-3.6-flash"));
     console.log(chalk.dim("           npm run dev -- config --provider openai --key sk-...\n"));
   });
@@ -551,7 +571,38 @@ function maskApiKey(apiKey: string): string {
 }
 
 function getProviderOption(provider: unknown): Config["aiProvider"] | null {
-  return provider === "gemini" || provider === "openai" ? provider : null;
+  return provider === "gemini" || provider === "openai" || provider === "claude"
+    ? provider
+    : null;
+}
+
+function getProviderDisplayName(provider: Config["aiProvider"]): string {
+  if (provider === "claude") return "Claude";
+  if (provider === "gemini") return "Google Gemini";
+  return "OpenAI";
+}
+
+async function validateProviderKey(
+  provider: Config["aiProvider"],
+  apiKey: string,
+  model: string,
+) {
+  if (provider === "claude") {
+    return validateClaudeKey(apiKey, model);
+  }
+
+  if (provider === "gemini") {
+    return validateGeminiKey(apiKey, model);
+  }
+
+  return validateOpenAIKey(apiKey, model);
+}
+
+function printValidationWarning(spinner: Ora, message: string): void {
+  spinner.stopAndPersist({
+    symbol: chalk.yellow("!"),
+    text: chalk.yellow(message),
+  });
 }
 
 function getExplainMode(options: ExplainCommandOptions): {
@@ -583,6 +634,14 @@ function getExplainMode(options: ExplainCommandOptions): {
     };
   }
 
+  if (options.pull) {
+    return {
+      label: "changes from the last pull",
+      historyMode: "pull:ORIG_HEAD..HEAD",
+      getDiff: getPullDiff,
+    };
+  }
+
   return {
     label: "working tree changes",
     historyMode: "working-tree",
@@ -591,12 +650,15 @@ function getExplainMode(options: ExplainCommandOptions): {
 }
 
 function getExplainModeError(options: ExplainCommandOptions): string | null {
-  const selectedModes = [options.staged, options.unstaged, Boolean(options.commit)]
-    .filter(Boolean)
-    .length;
+  const selectedModes = [
+    options.staged,
+    options.unstaged,
+    Boolean(options.commit),
+    options.pull,
+  ].filter(Boolean).length;
 
   if (selectedModes > 1) {
-    return "Choose only one diff mode: --staged, --unstaged, or --commit <sha>.";
+    return "Choose only one diff mode: --staged, --unstaged, --commit <sha>, or --pull.";
   }
 
   return null;

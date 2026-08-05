@@ -9,7 +9,7 @@ const MAX_HISTORY_ENTRIES = 50;
 export interface HistoryEntry {
   id: string;
   createdAt: string;
-  provider: "gemini" | "openai";
+  provider: "gemini" | "openai" | "claude";
   model: string;
   branch: string;
   commit: string;

@@ -1,30 +1,48 @@
 {
   "name": "git-explain",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "CLI that explains Git diffs in human language using AI.",
+  "main": "./dist/index.js",
   "type": "module",
   "bin": {
     "git-explain": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "start": "node dist/index.js",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test tests/**/*.test.ts",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm test && npm run build"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Lameira3730/git-explain.git"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "git",
+    "diff",
+    "cli",
+    "ai",
+    "openai",
+    "claude",
+    "anthropic",
+    "gemini",
+    "developer-tools"
+  ],
+  "author": "Goncalo Lameira",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/Lameira3730/git-explain/issues"
   },
   "homepage": "https://github.com/Lameira3730/git-explain#readme",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@google/generative-ai": "^0.24.1",
     "chalk": "^6.0.0",
     "commander": "^15.0.0",

@@ -7,23 +7,31 @@ export const isGitRepository = async (): Promise<boolean> => {
 };
 
 export const getDiff = async (files: string[] = []): Promise<string> => {
-  const diff = await git.diff(["HEAD", ...files]);
+  const diff = await git.diff(["HEAD", ...pathArgs(files)]);
   return diff;
 };
 
 export const getStagedDiff = async (files: string[] = []): Promise<string> => {
-  return git.diff(["--cached", ...files]);
+  return git.diff(["--cached", ...pathArgs(files)]);
 };
 
 export const getUnstagedDiff = async (files: string[] = []): Promise<string> => {
-  return git.diff(files);
+  return git.diff(pathArgs(files));
 };
 
 export const getCommitDiff = async (
   commit: string,
   files: string[] = [],
 ): Promise<string> => {
-  return git.show(["--format=", "--no-ext-diff", commit, "--", ...files]);
+  return git.show(["--format=", "--no-ext-diff", commit, ...pathArgs(files)]);
+};
+
+export const getPullDiff = async (files: string[] = []): Promise<string> => {
+  return git.diff(["ORIG_HEAD..HEAD", ...pathArgs(files)]);
+};
+
+const pathArgs = (files: string[]): string[] => {
+  return files.length ? ["--", ...files] : [];
 };
 
 export interface GitContext {

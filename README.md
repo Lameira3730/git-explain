@@ -14,6 +14,21 @@ It is built for indie devs and vibe coders who use AI coding tools and want to q
 
 ## Setup
 
+Install globally:
+
+```bash
+npm install -g git-explain
+git-explain setup
+```
+
+Or run without installing:
+
+```bash
+npx git-explain setup
+```
+
+For local development:
+
 ```bash
 npm install
 npm run build
@@ -30,6 +45,14 @@ Configuration is stored locally at:
 
 ```text
 ~/.git-explain/config.json
+```
+
+You can also configure keys through environment variables:
+
+```bash
+ANTHROPIC_API_KEY=...
+OPENAI_API_KEY=...
+GEMINI_API_KEY=...
 ```
 
 ## Commands
@@ -61,6 +84,12 @@ Explain a specific commit:
 git-explain explain --commit <sha>
 ```
 
+Explain changes introduced by the last `git pull`:
+
+```bash
+git-explain explain --pull
+```
+
 Ask for a cleaner no-emoji explanation:
 
 ```bash
@@ -76,7 +105,15 @@ git-explain explain --json
 Explain specific files:
 
 ```bash
+git-explain explain src/index.ts
 git-explain explain src/index.ts src/services/git.ts
+```
+
+Specific files also work with diff modes:
+
+```bash
+git-explain explain --staged src/index.ts
+git-explain explain --commit <sha> src/index.ts src/services/git.ts
 ```
 
 Update config:
@@ -151,6 +188,7 @@ What To Test
 
 ## Supported Providers
 
+- Claude
 - OpenAI
 - Google Gemini
 - Claude
@@ -162,4 +200,27 @@ The provider layer is intentionally small so more providers can be added later w
 ```bash
 npm run build
 npm test
+```
+
+## Publishing
+
+Before publishing:
+
+```bash
+npm pack --dry-run
+npm publish
+```
+
+After publishing, users can run:
+
+```bash
+npm install -g git-explain
+git-explain setup
+git-explain explain
+```
+
+Or without global install:
+
+```bash
+npx git-explain explain
 ```
