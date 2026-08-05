@@ -7,10 +7,12 @@ import {
   isQuotaError,
   type ValidationResult,
 } from "./validation.js";
+import { buildExplainPrompt, type PromptOptions } from "./prompt.js";
 
 export const explainDiffWithOpenAI = async (
   diff: string,
   config: Config,
+  options: PromptOptions,
 ): Promise<string> => {
   const openai = new OpenAI({ apiKey: config.apiKey });
 
@@ -19,22 +21,10 @@ export const explainDiffWithOpenAI = async (
     messages: [
       {
         role: "system",
-        content: `
-          Act as a senior developer and mentor.
-          Analyze the following git diff and explain in a clear, friendly, and organized way what has changed.
-          The target audience is indie devs and vibe coders who want to quickly understand the impact of the changes.
-          
-          Format requirements:
-          - Use Markdown for readability (bolding, lists).
-          - Start with a very concise "High-Level Summary".
-          - Use a "Key Changes" section with bullet points.
-          - If there are breaking changes or risks, create a "⚠️ Risks & Warnings" section.
-          - Keep tone encouraging and professional.
-          
-          If the diff is too large, focus on the most impactful changes.
-        `,
+        content:
+          "You are a senior developer helping users understand Git diffs in practical human language.",
       },
-      { role: "user", content: `Git Diff:\n${diff}` },
+      { role: "user", content: buildExplainPrompt(diff, options) },
     ],
   });
 

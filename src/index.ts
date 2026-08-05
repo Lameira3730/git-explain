@@ -3,8 +3,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import inquirer from "inquirer";
 import ora from "ora";
-import { Marked } from "marked";
-import TerminalRenderer from "marked-terminal";
+import { marked } from "marked";
+import { markedTerminal } from "marked-terminal";
 import {
   defaultModels,
   saveConfig,
@@ -13,27 +13,43 @@ import {
   resolveConfig,
   type Config,
 } from "./utils/config.js";
-import { getDiff, getGitContext, isGitRepository } from "./services/git.js";
+import {
+  getCommitDiff,
+  getDiff,
+  getGitContext,
+  getStagedDiff,
+  getUnstagedDiff,
+  isGitRepository,
+} from "./services/git.js";
 import { explainDiffWithGemini, validateGeminiKey } from "./services/gemini.js";
 import { explainDiffWithOpenAI, validateOpenAIKey } from "./services/openai.js";
 import {
+  clearHistory,
   getHistory,
   getHistoryEntry,
   getHistoryPath,
   saveHistoryEntry,
 } from "./services/history.js";
-import { getDiffStat } from "./utils/diff.js";
+import { formatDiffByFile, getChangedFiles, getDiffStat } from "./utils/diff.js";
 
 const program = new Command();
-const marked = new Marked(new TerminalRenderer());
+marked.use(
+  markedTerminal({
+    showSectionPrefix: false,
+    strong: chalk.bold,
+    heading: chalk.cyan.bold,
+    firstHeading: chalk.cyan.bold,
+    hr: chalk.dim,
+  }),
+);
 
 const providerModels: Record<
   "gemini" | "openai",
   { validationModel: string; models: string[] }
 > = {
   gemini: {
-    validationModel: "gemini-2.0-flash",
-    models: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-pro"],
+    validationModel: "gemini-3.6-flash",
+    models: ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest"],
   },
   openai: {
     validationModel: "gpt-4o-mini",
@@ -49,10 +65,19 @@ interface ConfigCommandOptions {
 
 interface HistoryCommandOptions {
   limit: string;
+  clear?: boolean;
 }
 
 interface DoctorCommandOptions {
   skipProvider?: boolean;
+}
+
+interface ExplainCommandOptions {
+  staged?: boolean;
+  unstaged?: boolean;
+  commit?: string;
+  emoji?: boolean;
+  json?: boolean;
 }
 
 program
@@ -193,26 +218,63 @@ program
 program
   .command("explain")
   .description("Explain current Git changes")
+  .option("--staged", "Explain staged changes only")
+  .option("--unstaged", "Explain unstaged changes only")
+  .option("--commit <sha>", "Explain a specific commit")
+  .option("--no-emoji", "Ask the AI for a cleaner explanation without emojis")
+  .option("--json", "Print machine-readable JSON output")
   .argument("[files...]", "Specific files to analyze")
-  .action(async (files: string[]) => {
+  .action(async (files: string[], options: ExplainCommandOptions) => {
     const config = getConfig();
     if (!config) {
       console.log(chalk.red("Error: Run `git-explain setup` first."));
       return;
     }
 
+    const modeError = getExplainModeError(options);
+    if (modeError) {
+      console.log(chalk.red(modeError));
+      return;
+    }
+
+    const diffMode = getExplainMode(options);
+
+    const inRepo = await safely(isGitRepository, false);
+    if (!inRepo) {
+      printJsonOrText(
+        options.json,
+        {
+          ok: false,
+          error: "not_git_repository",
+          message: "Run `git-explain explain` inside a Git repository.",
+        },
+        chalk.red("Error: Run `git-explain explain` inside a Git repository."),
+      );
+      return;
+    }
+
     const spinner = ora(
       files.length
-        ? `Analyzing files: ${files.join(", ")}...`
-        : "Analyzing all changes...",
-    ).start();
+        ? `Analyzing ${diffMode.label} for files: ${files.join(", ")}...`
+        : `Analyzing ${diffMode.label}...`,
+    );
+    if (!options.json) spinner.start();
 
     try {
-      const diff = await getDiff(files);
+      const diff = await diffMode.getDiff(files);
 
       if (!diff) {
-        spinner.stop();
-        console.log(chalk.yellow("No changes found to explain."));
+        if (!options.json) spinner.stop();
+        printJsonOrText(
+          options.json,
+          {
+            ok: false,
+            error: "empty_diff",
+            mode: diffMode.historyMode,
+            message: `No ${diffMode.label} found to explain.`,
+          },
+          chalk.yellow(`No ${diffMode.label} found to explain.`),
+        );
         return;
       }
 
@@ -220,30 +282,74 @@ program
         getGitContext(),
         Promise.resolve(getDiffStat(diff)),
       ]);
+      const changedFiles = getChangedFiles(diff);
+      const formattedDiff = formatDiffByFile(diff);
 
       const explanation =
         config.aiProvider === "openai"
-          ? await explainDiffWithOpenAI(diff, config)
-          : await explainDiffWithGemini(diff, config);
+          ? await explainDiffWithOpenAI(formattedDiff, config, {
+              includeEmoji: options.emoji !== false,
+            })
+          : await explainDiffWithGemini(formattedDiff, config, {
+              includeEmoji: options.emoji !== false,
+            });
 
       const historyEntry = saveHistoryEntry({
         provider: config.aiProvider,
         model: config.model,
         branch: gitContext.branch,
         commit: gitContext.commit,
-        files,
+        files: files.length ? files : changedFiles,
+        mode: diffMode.historyMode,
         diffStat,
         explanation,
       });
+
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              id: historyEntry.id,
+              provider: historyEntry.provider,
+              model: historyEntry.model,
+              branch: historyEntry.branch,
+              commit: historyEntry.commit,
+              mode: historyEntry.mode,
+              files: historyEntry.files,
+              diffStat: historyEntry.diffStat,
+              explanation,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
 
       spinner.succeed(
         `Analysis complete. Saved as ${chalk.cyan(historyEntry.id)}\n`,
       );
       printDiffStat(diffStat);
-      console.log(await marked.parse(explanation));
+      console.log(await renderMarkdown(explanation));
     } catch (error) {
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: false,
+              error: "analysis_failed",
+              message: getDisplayErrorMessage(error),
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+
       spinner.fail("Error analyzing changes.");
-      console.error(error);
+      console.error(getDisplayErrorMessage(error));
     }
   });
 
@@ -251,7 +357,35 @@ program
   .command("history")
   .description("Show recent explanations")
   .option("-l, --limit <number>", "Number of entries to show", "10")
-  .action((options: HistoryCommandOptions) => {
+  .option("--clear", "Delete all saved explanations")
+  .action(async (options: HistoryCommandOptions) => {
+    if (options.clear) {
+      const history = getHistory();
+
+      if (!history.length) {
+        console.log(chalk.yellow("History is already empty."));
+        return;
+      }
+
+      const { confirmed } = await inquirer.prompt<{ confirmed: boolean }>([
+        {
+          type: "confirm",
+          name: "confirmed",
+          message: `Delete ${history.length} saved explanation${history.length === 1 ? "" : "s"}?`,
+          default: false,
+        },
+      ]);
+
+      if (!confirmed) {
+        console.log(chalk.yellow("History was not changed."));
+        return;
+      }
+
+      clearHistory();
+      console.log(chalk.green("History cleared."));
+      return;
+    }
+
     const limit = Number.parseInt(options.limit, 10);
     const history = getHistory().slice(0, Number.isNaN(limit) ? 10 : limit);
 
@@ -269,6 +403,7 @@ program
         model: entry.model,
         branch: entry.branch,
         commit: entry.commit,
+        mode: entry.mode || "working tree",
         files: entry.diffStat.filesChanged,
         changes: `+${entry.diffStat.additions} / -${entry.diffStat.deletions}`,
       })),
@@ -284,6 +419,7 @@ program
 
     if (!entry) {
       console.log(chalk.red(`No history entry found for id: ${id}`));
+      console.log(chalk.dim("Run `git-explain history` and then `git-explain show 0` for the latest entry."));
       return;
     }
 
@@ -294,7 +430,7 @@ program
       ),
     );
     printDiffStat(entry.diffStat);
-    console.log(await marked.parse(entry.explanation));
+    console.log(await renderMarkdown(entry.explanation));
   });
 
 program
@@ -377,6 +513,36 @@ program
     spinner.fail(validation.message || "Provider validation failed.");
   });
 
+program
+  .command("guide")
+  .alias("commands")
+  .description("Show a friendly guide to the main commands")
+  .action(() => {
+    console.log(chalk.bold("\ngit-explain command guide\n"));
+    console.log(`${chalk.cyan("setup")}      Configure provider, API key, and model.`);
+    console.log(chalk.dim("           npm run dev -- setup\n"));
+    console.log(`${chalk.cyan("doctor")}     Check config, Git state, provider access, and history.`);
+    console.log(chalk.dim("           npm run dev -- doctor"));
+    console.log(chalk.dim("           npm run dev -- doctor --skip-provider\n"));
+    console.log(`${chalk.cyan("explain")}    Explain a diff in human language.`);
+    console.log(chalk.dim("           npm run dev -- explain"));
+    console.log(chalk.dim("           npm run dev -- explain --staged"));
+    console.log(chalk.dim("           npm run dev -- explain --unstaged"));
+    console.log(chalk.dim("           npm run dev -- explain --commit abc123"));
+    console.log(chalk.dim("           npm run dev -- explain --json"));
+    console.log(chalk.dim("           npm run dev -- explain --no-emoji src/index.ts\n"));
+    console.log(`${chalk.cyan("history")}    List saved explanations.`);
+    console.log(chalk.dim("           npm run dev -- history"));
+    console.log(chalk.dim("           npm run dev -- history --limit 20"));
+    console.log(chalk.dim("           npm run dev -- history --clear\n"));
+    console.log(`${chalk.cyan("show")}       Open a saved explanation by id or index.`);
+    console.log(chalk.dim("           npm run dev -- show 0"));
+    console.log(chalk.dim("           npm run dev -- show msg9ljxt-3tr5nl\n"));
+    console.log(`${chalk.cyan("config")}     Update provider, model, or API key without rerunning setup.`);
+    console.log(chalk.dim("           npm run dev -- config --provider gemini --model gemini-3.6-flash"));
+    console.log(chalk.dim("           npm run dev -- config --provider openai --key sk-...\n"));
+  });
+
 program.parse(process.argv);
 
 function maskApiKey(apiKey: string): string {
@@ -386,6 +552,54 @@ function maskApiKey(apiKey: string): string {
 
 function getProviderOption(provider: unknown): Config["aiProvider"] | null {
   return provider === "gemini" || provider === "openai" ? provider : null;
+}
+
+function getExplainMode(options: ExplainCommandOptions): {
+  label: string;
+  historyMode: string;
+  getDiff: (files: string[]) => Promise<string>;
+} {
+  if (options.staged) {
+    return {
+      label: "staged changes",
+      historyMode: "staged",
+      getDiff: getStagedDiff,
+    };
+  }
+
+  if (options.unstaged) {
+    return {
+      label: "unstaged changes",
+      historyMode: "unstaged",
+      getDiff: getUnstagedDiff,
+    };
+  }
+
+  if (options.commit) {
+    return {
+      label: `commit ${options.commit}`,
+      historyMode: `commit:${options.commit}`,
+      getDiff: (files) => getCommitDiff(options.commit as string, files),
+    };
+  }
+
+  return {
+    label: "working tree changes",
+    historyMode: "working-tree",
+    getDiff,
+  };
+}
+
+function getExplainModeError(options: ExplainCommandOptions): string | null {
+  const selectedModes = [options.staged, options.unstaged, Boolean(options.commit)]
+    .filter(Boolean)
+    .length;
+
+  if (selectedModes > 1) {
+    return "Choose only one diff mode: --staged, --unstaged, or --commit <sha>.";
+  }
+
+  return null;
 }
 
 function printCheck(
@@ -421,4 +635,32 @@ function printDiffStat(diffStat: {
       `${diffStat.filesChanged} files changed | +${diffStat.additions} / -${diffStat.deletions}\n`,
     ),
   );
+}
+
+function printJsonOrText(
+  json: boolean | undefined,
+  jsonValue: unknown,
+  text: string,
+) {
+  if (json) {
+    console.log(JSON.stringify(jsonValue, null, 2));
+    return;
+  }
+
+  console.log(text);
+}
+
+function getDisplayErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+async function renderMarkdown(markdown: string): Promise<string> {
+  const rendered = await marked.parse(markdown);
+
+  return rendered
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .trim();
 }

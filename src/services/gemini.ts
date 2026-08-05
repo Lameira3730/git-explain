@@ -7,10 +7,12 @@ import {
   isQuotaError,
   type ValidationResult,
 } from "./validation.js";
+import { buildExplainPrompt, type PromptOptions } from "./prompt.js";
 
 export const explainDiffWithGemini = async (
   diff: string,
   config: Config,
+  options: PromptOptions,
 ): Promise<string> => {
   const genAI = new GoogleGenerativeAI(config.apiKey);
   const modelName = config.model.startsWith("models/")
@@ -19,26 +21,20 @@ export const explainDiffWithGemini = async (
 
   const model = genAI.getGenerativeModel({ model: modelName });
 
-  const prompt = `
-    Act as a senior developer and mentor.
-    Analyze the following git diff and explain in a clear, friendly, and organized way what has changed.
-    The target audience is indie devs and vibe coders who want to quickly understand the impact of the changes.
-    
-    Format requirements:
-    - Use Markdown for readability (bolding, lists).
-    - Start with a very concise "High-Level Summary".
-    - Use a "Key Changes" section with bullet points.
-    - If there are breaking changes or risks, create a "⚠️ Risks & Warnings" section.
-    - Keep tone encouraging and professional.
-    
-    If the diff is too large, focus on the most impactful changes.
-    
-    Git Diff:
-    ${diff}
-  `;
+  const prompt = buildExplainPrompt(diff, options);
 
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+  try {
+    const result = await model.generateContent(prompt);
+    return result.response.text();
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      throw new Error(
+        `Gemini model "${config.model}" is not available for generateContent. Run \`git-explain config --provider gemini --model gemini-3.6-flash\` or run setup again.`,
+      );
+    }
+
+    throw error;
+  }
 };
 
 export const validateGeminiKey = async (
@@ -90,4 +86,13 @@ export const validateGeminiKey = async (
       message: getErrorMessage(error),
     };
   }
+};
+
+const isNotFoundError = (error: unknown): boolean => {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    error.status === 404
+  );
 };

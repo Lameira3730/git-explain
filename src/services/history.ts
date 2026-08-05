@@ -2,7 +2,8 @@ import fs from "fs";
 import path from "path";
 import { ensureAppDir, getAppDir } from "../utils/config.js";
 
-const HISTORY_PATH = path.join(getAppDir(), "history.json");
+const HISTORY_PATH =
+  process.env.GIT_EXPLAIN_HISTORY_PATH || path.join(getAppDir(), "history.json");
 const MAX_HISTORY_ENTRIES = 50;
 
 export interface HistoryEntry {
@@ -13,6 +14,7 @@ export interface HistoryEntry {
   branch: string;
   commit: string;
   files: string[];
+  mode?: string;
   diffStat: {
     filesChanged: number;
     additions: number;
@@ -46,7 +48,19 @@ export const getHistory = (): HistoryEntry[] => {
 };
 
 export const getHistoryEntry = (id: string): HistoryEntry | null => {
-  return getHistory().find((entry) => entry.id === id) || null;
+  const history = getHistory();
+  const index = Number.parseInt(id, 10);
+
+  if (!Number.isNaN(index) && index >= 0) {
+    return history[index] || null;
+  }
+
+  return history.find((entry) => entry.id === id) || null;
+};
+
+export const clearHistory = (): void => {
+  ensureAppDir();
+  fs.writeFileSync(HISTORY_PATH, JSON.stringify([], null, 2));
 };
 
 export const getHistoryPath = (): string => HISTORY_PATH;

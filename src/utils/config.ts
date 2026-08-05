@@ -14,7 +14,7 @@ export interface Config {
 }
 
 export const defaultModels: Record<Config["aiProvider"], string> = {
-  gemini: "gemini-2.0-flash",
+  gemini: "gemini-3.6-flash",
   openai: "gpt-4o-mini",
 };
 
@@ -67,11 +67,32 @@ export const ensureAppDir = (): void => {
   }
 };
 
-const normalizeConfig = (config: Config): Config => ({
-  ...config,
-  apiKey: config.apiKey.trim(),
-  model: config.model.trim() || defaultModels[config.aiProvider],
-});
+const normalizeConfig = (config: Config): Config => {
+  const model = config.model.trim() || defaultModels[config.aiProvider];
+
+  return {
+    ...config,
+    apiKey: config.apiKey.trim(),
+    model: normalizeModel(config.aiProvider, model),
+  };
+};
+
+const normalizeModel = (
+  provider: Config["aiProvider"],
+  model: string,
+): string => {
+  if (provider !== "gemini") return model;
+
+  const modelName = model.replace(/^models\//, "");
+  const legacyGeminiModels = new Set([
+    "gemini-pro",
+    "gemini-1.5-pro",
+    "gemini-1.5-pro-latest",
+    "gemini-2.0-flash",
+  ]);
+
+  return legacyGeminiModels.has(modelName) ? defaultModels.gemini : modelName;
+};
 
 const getProviderFromEnv = (): Config["aiProvider"] | null => {
   if (process.env.OPENAI_API_KEY) return "openai";

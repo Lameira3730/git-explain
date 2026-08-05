@@ -11,6 +11,21 @@ export const getDiff = async (files: string[] = []): Promise<string> => {
   return diff;
 };
 
+export const getStagedDiff = async (files: string[] = []): Promise<string> => {
+  return git.diff(["--cached", ...files]);
+};
+
+export const getUnstagedDiff = async (files: string[] = []): Promise<string> => {
+  return git.diff(files);
+};
+
+export const getCommitDiff = async (
+  commit: string,
+  files: string[] = [],
+): Promise<string> => {
+  return git.show(["--format=", "--no-ext-diff", commit, "--", ...files]);
+};
+
 export interface GitContext {
   branch: string;
   commit: string;
