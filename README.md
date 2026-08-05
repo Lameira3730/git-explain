@@ -153,6 +153,7 @@ What To Test
 
 - OpenAI
 - Google Gemini
+- Claude
 
 The provider layer is intentionally small so more providers can be added later without changing the CLI flow.
 
