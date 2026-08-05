@@ -17,14 +17,14 @@ It is built for indie devs and vibe coders who use AI coding tools and want to q
 Install globally:
 
 ```bash
-npm install -g git-explain
+npm install -g @lameira123/git-explain
 git-explain setup
 ```
 
 Or run without installing:
 
 ```bash
-npx git-explain setup
+npx @lameira123/git-explain setup
 ```
 
 For local development:
@@ -214,7 +214,7 @@ npm publish
 After publishing, users can run:
 
 ```bash
-npm install -g git-explain
+npm install -g @lameira123/git-explain
 git-explain setup
 git-explain explain
 ```
@@ -222,5 +222,5 @@ git-explain explain
 Or without global install:
 
 ```bash
-npx git-explain explain
+npx @lameira123/git-explain explain
 ```

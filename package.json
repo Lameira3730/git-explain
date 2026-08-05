@@ -1,11 +1,11 @@
 {
-  "name": "git-explain",
+  "name": "@lameira123/git-explain",
   "version": "1.0.0",
   "description": "CLI that explains Git diffs in human language using AI.",
   "main": "./dist/index.js",
   "type": "module",
   "bin": {
-    "git-explain": "./dist/index.js"
+    "git-explain": "dist/index.js"
   },
   "files": [
     "dist",
