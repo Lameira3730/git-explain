@@ -1,0 +1,46 @@
+{
+  "name": "git-explain",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "bin": {
+    "git-explain": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Lameira3730/git-explain.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Lameira3730/git-explain/issues"
+  },
+  "homepage": "https://github.com/Lameira3730/git-explain#readme",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "chalk": "^6.0.0",
+    "commander": "^15.0.0",
+    "dotenv": "^17.4.2",
+    "inquirer": "^14.0.2",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0",
+    "openai": "^7.4.0",
+    "ora": "^9.4.1",
+    "simple-git": "^3.36.0"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.10",
+    "@types/node": "^26.1.2",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.23.7",
+    "typescript": "^7.0.2"
+  }
+}
