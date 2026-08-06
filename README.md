@@ -188,7 +188,6 @@ What To Test
 
 ## Supported Providers
 
-- Claude
 - OpenAI
 - Google Gemini
 - Claude
