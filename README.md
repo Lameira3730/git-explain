@@ -2,7 +2,7 @@
 
 `git-explain` is a CLI that explains Git diffs in clear human language using the user's own AI API key.
 
-It is built for indie devs and vibe coders who use AI coding tools and want to quickly understand what changed when something suddenly works, breaks, or behaves differently.
+It is built for devs who use AI coding tools and want to quickly understand what changed when something suddenly works, breaks, or behaves differently.
 
 ## What It Does
 
